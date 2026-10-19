@@ -1,4 +1,5 @@
 rental_app
+rental_tests
 build/
 .vscode/
 *.exe

@@ -1,276 +1,110 @@
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <string>
-#include <vector>
-#include <unordered_map>
-#include <iomanip>
-using namespace std;
 
-// ==========================================
-// 1. ISP: Small, focused vehicle interface
-// ==========================================
-class IVehicle {
-public:
-    virtual ~IVehicle() = default;
+#include "vehicles/Car.h"
+#include "vehicles/Bike.h"
+#include "vehicles/Truck.h"
+#include "payment/UpiPayment.h"
+#include "payment/CardPayment.h"
+#include "payment/CashPayment.h"
+#include "pricing/StandardPricing.h"
+#include "pricing/LongRentalDiscountPricing.h"
+#include "repo/InMemoryVehicleRepository.h"
+#include "notify/ConsoleNotifier.h"
+#include "service/RentalService.h"
+#include "roles/Admin.h"
+#include "roles/Customer.h"
 
-    virtual string getId() const = 0;
-    virtual string getName() const = 0;
-    virtual double getDailyRate() const = 0;
-    virtual bool isAvailable() const = 0;
-    virtual void setAvailable(bool available) = 0;
-};
+namespace {
 
-// ==========================================
-// Vehicle implementations: OCP and LSP
-// ==========================================
-class Car : public IVehicle {
-private:
-    string id, name;
-    double rate;
-    bool available = true;
+void printSection(const std::string& title) {
+    std::cout << "\n=== " << title << " ===\n";
+}
 
-public:
-    Car(string id, string name, double rate)
-        : id(id), name(name), rate(rate) {}
-
-    string getId() const override { return id; }
-    string getName() const override { return name; }
-    double getDailyRate() const override { return rate; }
-    bool isAvailable() const override { return available; }
-    void setAvailable(bool value) override {
-        available = value;
+// Works with anything that offers IRentalOperations.
+void printAvailableVehicles(const IRentalOperations& rentals) {
+    std::cout << "Available vehicles:\n";
+    auto vehicles = rentals.getAvailableVehicles();
+    if (vehicles.empty()) {
+        std::cout << "  (none)\n";
+        return;
     }
-};
-
-class Bike : public IVehicle {
-private:
-    string id, name;
-    double rate;
-    bool available = true;
-
-public:
-    Bike(string id, string name, double rate)
-        : id(id), name(name), rate(rate) {}
-
-    string getId() const override { return id; }
-    string getName() const override { return name; }
-    double getDailyRate() const override { return rate; }
-    bool isAvailable() const override { return available; }
-    void setAvailable(bool value) override {
-        available = value;
+    for (const auto& vehicle : vehicles) {
+        std::cout << "  [" << vehicle->getType() << "] " << vehicle->getId()
+                  << " | " << vehicle->getName() << " | Rs. " << std::fixed
+                  << std::setprecision(2) << vehicle->getDailyRate()
+                  << "/day\n";
     }
-};
+}
 
-// ==========================================
-// ISP: Separate payment abstraction
-// ==========================================
-class IPayment {
-public:
-    virtual ~IPayment() = default;
-    virtual bool pay(double amount) = 0;
-};
+// ISP: this function only needs cargo information, so it only
+// accepts ICargoCarrier. Cars and Bikes are never involved.
+void printCargoInfo(const std::string& name, const ICargoCarrier& carrier) {
+    std::cout << name << " can carry " << std::fixed << std::setprecision(0)
+              << carrier.getCargoCapacityKg() << " kg of cargo.\n";
+}
 
-class UpiPayment : public IPayment {
-public:
-    bool pay(double amount) override {
-        cout << "Paid Rs. " << fixed << setprecision(2)
-             << amount << " using UPI.\n";
-        return true;
-    }
-};
+}  // namespace
 
-class CardPayment : public IPayment {
-public:
-    bool pay(double amount) override {
-        cout << "Paid Rs. " << fixed << setprecision(2)
-             << amount << " using Card.\n";
-        return true;
-    }
-};
-
-// ==========================================
-// Rental record
-// ==========================================
-struct Rental {
-    string customerName;
-    string vehicleId;
-    int days;
-    double totalCost;
-};
-
-// ==========================================
-// SRP + DIP: RentalService coordinates rentals
-// It depends on interfaces, not concrete vehicles
-// or concrete payment implementations.
-// ==========================================
-class RentalService {
-private:
-    vector<shared_ptr<IVehicle>> vehicles;
-    shared_ptr<IPayment> payment;
-    unordered_map<string, Rental> activeRentals;
-
-public:
-    explicit RentalService(shared_ptr<IPayment> payment)
-        : payment(payment) {}
-
-    void addVehicle(shared_ptr<IVehicle> vehicle) {
-        vehicles.push_back(vehicle);
-        cout << vehicle->getName() << " added successfully.\n";
-    }
-
-    void showAvailableVehicles() const {
-        cout << "\n--- Available Vehicles ---\n";
-
-        bool found = false;
-
-        for (const auto& vehicle : vehicles) {
-            if (vehicle->isAvailable()) {
-                cout << "ID: " << vehicle->getId()
-                     << " | Name: " << vehicle->getName()
-                     << " | Daily rate: Rs. "
-                     << vehicle->getDailyRate() << '\n';
-                found = true;
-            }
-        }
-
-        if (!found)
-            cout << "No vehicles available.\n";
-    }
-
-    bool rentVehicle(const string& customer,
-                     const string& vehicleId, int days) {
-        if (days <= 0) {
-            cout << "Rental days must be positive.\n";
-            return false;
-        }
-
-        if (activeRentals.count(vehicleId)) {
-            cout << "This vehicle is already rented.\n";
-            return false;
-        }
-
-        for (const auto& vehicle : vehicles) {
-            if (vehicle->getId() == vehicleId) {
-                if (!vehicle->isAvailable()) {
-                    cout << "Vehicle is unavailable.\n";
-                    return false;
-                }
-
-                double cost = vehicle->getDailyRate() * days;
-
-                cout << "\nRental cost: Rs. " << fixed
-                     << setprecision(2) << cost << '\n';
-
-                // Mark the vehicle as rented only after
-                // payment succeeds.
-                if (!payment->pay(cost)) {
-                    cout << "Payment failed. Rental cancelled.\n";
-                    return false;
-                }
-
-                vehicle->setAvailable(false);
-
-                activeRentals[vehicleId] = {
-                    customer, vehicleId, days, cost
-                };
-
-                cout << "Vehicle rented successfully to "
-                     << customer << ".\n";
-                return true;
-            }
-        }
-
-        cout << "Vehicle ID not found.\n";
-        return false;
-    }
-
-    bool returnVehicle(const string& vehicleId) {
-        auto rental = activeRentals.find(vehicleId);
-
-        if (rental == activeRentals.end()) {
-            cout << "No active rental found for this vehicle.\n";
-            return false;
-        }
-
-        for (const auto& vehicle : vehicles) {
-            if (vehicle->getId() == vehicleId) {
-                vehicle->setAvailable(true);
-                cout << vehicle->getName()
-                     << " returned successfully by "
-                     << rental->second.customerName << ".\n";
-
-                activeRentals.erase(rental);
-                return true;
-            }
-        }
-
-        return false;
-    }
-};
-
-// ==========================================
-// SRP: Customer represents the customer role
-// ==========================================
-class Customer {
-private:
-    string name;
-
-public:
-    explicit Customer(string name) : name(name) {}
-
-    void rent(RentalService& service,
-              const string& vehicleId, int days) {
-        service.rentVehicle(name, vehicleId, days);
-    }
-
-    void returnVehicle(RentalService& service,
-                       const string& vehicleId) {
-        service.returnVehicle(vehicleId);
-    }
-};
-
-// ==========================================
-// SRP: Admin handles vehicle administration
-// ==========================================
-class Admin {
-public:
-    void addCar(RentalService& service, const string& id,
-                const string& name, double rate) {
-        service.addVehicle(
-            make_shared<Car>(id, name, rate));
-    }
-
-    void addBike(RentalService& service, const string& id,
-                 const string& name, double rate) {
-        service.addVehicle(
-            make_shared<Bike>(id, name, rate));
-    }
-};
-
-// ==========================================
-// Main program
-// ==========================================
 int main() {
-    auto payment = make_shared<UpiPayment>();
-    RentalService service(payment);
+    // ---- Composition root: concrete classes are chosen ONLY here ----
+    InMemoryVehicleRepository repository;
+    StandardPricing standardPricing;
+    ConsoleNotifier notifier;
+    RentalService service(repository, standardPricing, notifier);
+
+    UpiPayment upi;
+    CardPayment card;
+    CashPayment cash;
 
     Admin admin;
-    Customer customer("Arun");
+    Customer arun("Arun");
+    Customer priya("Priya");
+    Customer kavya("Kavya");
 
-    admin.addCar(service, "C101", "Honda City", 2000);
-    admin.addBike(service, "B101", "Royal Enfield", 800);
+    printSection("1. Admin adds vehicles");
+    auto truck = std::make_shared<Truck>("T101", "Tata Ace", 1500, 750);
+    admin.addVehicle(service, std::make_shared<Car>("C101", "Honda City", 2000));
+    admin.addVehicle(service, std::make_shared<Bike>("B101", "Royal Enfield", 800));
+    admin.addVehicle(service, truck);
+    admin.addVehicle(service, std::make_shared<Car>("C101", "Duplicate Car", 999));
+    printCargoInfo(truck->getName(), *truck);
+    printAvailableVehicles(service);
 
-    service.showAvailableVehicles();
+    printSection("2. Customers rent using different payment methods");
+    arun.rent(service, "C101", 3, upi);
+    priya.rent(service, "B101", 2, card);
+    kavya.rent(service, "T101", 1, cash);
+    printAvailableVehicles(service);
 
-    cout << "\n--- Customer rents a vehicle ---\n";
-    customer.rent(service, "C101", 3);
+    printSection("3. Invalid requests are rejected");
+    priya.rent(service, "C101", 1, card);   // already rented by Arun
+    priya.rent(service, "X999", 1, card);   // no such vehicle
+    priya.rent(service, "B101", 0, card);   // invalid number of days
+    priya.returnVehicle(service, "C101");   // Priya did not rent C101
 
-    service.showAvailableVehicles();
+    printSection("4. Customers return vehicles");
+    arun.returnVehicle(service, "C101");
+    priya.returnVehicle(service, "B101");
+    kavya.returnVehicle(service, "T101");
+    printAvailableVehicles(service);
 
-    cout << "\n--- Customer returns the vehicle ---\n";
-    customer.returnVehicle(service, "C101");
+    printSection("5. Extension: long-rental discount pricing");
+    std::cout << "Same 6-day rental of the Honda City, two pricing policies.\n"
+              << "Only the pricing object passed to RentalService differs.\n\n";
 
-    service.showAvailableVehicles();
+    std::cout << "-- With StandardPricing --\n";
+    arun.rent(service, "C101", 6, upi);
+    arun.returnVehicle(service, "C101");
+
+    LongRentalDiscountPricing discountPricing;  // the new class
+    RentalService discountService(repository, discountPricing, notifier);
+
+    std::cout << "\n-- With LongRentalDiscountPricing --\n";
+    arun.rent(discountService, "C101", 6, upi);
+    arun.returnVehicle(discountService, "C101");
 
     return 0;
 }
