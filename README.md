@@ -49,6 +49,15 @@ g++ -std=c++17 -Iinclude src\RentalService.cpp src\main.cpp -o rental_app.exe
 .\rental_app.exe --demo
 ```
 
+**Building a Windows .exe from WSL/Linux**
+ 
+Install the MinGW cross-compiler once, then build:
+```
+sudo apt install -y g++-mingw-w64-x86-64
+x86_64-w64-mingw32-g++ -std=c++17 -static -Iinclude src/*.cpp -o rental_app.exe
+```
+Double-click `rental_app.exe` in File Explorer to open the interactive menu in a console window. `-static` makes the `.exe` run on any Windows PC without extra DLLs.
+
 ## Using the interactive menu
 
 On start, choose a pricing policy (standard, or the long-rental discount extension). A sample fleet is loaded, then this menu appears:
